@@ -77,6 +77,13 @@ func streamOneObject(ctx context.Context, cl *minio.Client, bucket, key string, 
 	for {
 		n, readErr := obj.Read(buf)
 		if n > 0 {
+			// minio-go's Object.Read reports the trailing data and io.EOF in
+			// the SAME call (its internal readFull combines them) rather than
+			// EOF arriving alone on a later call — verified via source and by
+			// TestIntegration_StreamObjectBody_MultiChunk's partial-tail case.
+			// This is the only place is_final=true is ever set on a real
+			// (non-error, non-zero-byte) chunk, so it depends on that SDK
+			// behavior continuing to hold.
 			isFinal := readErr == io.EOF
 			chunk := &gen.ObjectBodyChunk{
 				Data:        append([]byte(nil), buf[:n]...),
