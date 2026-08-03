@@ -16,6 +16,8 @@ nodes:
     - name: PutObject
       input: PutObjectRequest
       output: PutObjectResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
         Upload an object's full body inline, with content type and optional
         user metadata. The body travels through the platform's normal
