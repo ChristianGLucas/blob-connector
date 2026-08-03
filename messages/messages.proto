@@ -1,0 +1,372 @@
+// This file defines the data contracts (messages) for your Axiom package.
+// Every node's --input and --output refers to a message defined here.
+//
+// Run `axiom create message <Name>` to scaffold a new message below.
+// Run `axiom generate` to compile these definitions into language bindings in gen/.
+//
+// DOCUMENTATION
+//   Comments written directly above a message or field declaration are extracted
+//   automatically at publish time and shown in the Axiom registry as documentation.
+//   Write your descriptions there — no separate doc files needed.
+//
+//   Leading comment  (no blank line before the declaration) → registry description ✓
+//   Detached comment (blank line before the declaration)    → ignored by registry  ✗
+//
+// This file is yours to edit. Axiom only appends new message blocks — it never
+// overwrites or removes content you have written.
+
+syntax = "proto3";
+
+package christiangeorgelucas.blob_connector;
+
+option go_package = ".;gen";
+
+// How to reach and authenticate against the target S3-compatible object
+// store. This connector is GENERIC BY PROTOCOL — it speaks the S3 API
+// against a caller-set endpoint, so this one message configures AWS S3,
+// Cloudflare R2, GCS interop mode, MinIO, Backblaze B2, and DigitalOcean
+// Spaces alike; there is no per-provider node or field.
+message Connection {
+  // S3-compatible endpoint host, WITHOUT a scheme, e.g. "s3.amazonaws.com",
+  // "play.min.io", "<accountid>.r2.cloudflarestorage.com",
+  // "storage.googleapis.com" (GCS interop mode), "localhost:9000" (local
+  // MinIO), or "<region>.digitaloceanspaces.com". Required.
+  string endpoint = 1;
+  // Signing region, e.g. "us-east-1". AWS SigV4 signing requires a region
+  // string even against providers with no real regional concept — MinIO, R2,
+  // and GCS interop mode all accept "us-east-1" as a harmless default when
+  // you don't have (or need) a genuine one.
+  string region = 2;
+  // Bucket this operation targets. CopyObject is the one exception: this
+  // bucket is the COPY DESTINATION, and the source bucket is named
+  // separately (see CopyObjectRequest.source_bucket).
+  string bucket = 3;
+  // Use plain HTTP instead of HTTPS. Defaults to false (HTTPS) — the correct
+  // setting for every real provider (AWS S3, R2, GCS, B2, Spaces, and any
+  // TLS-terminated MinIO). Set true ONLY against a local/dev MinIO that
+  // isn't TLS-terminated (e.g. a bare `docker run minio/minio` on
+  // localhost).
+  bool insecure = 4;
+  // Force path-style addressing ("https://endpoint/bucket/key") instead of
+  // virtual-host style ("https://bucket.endpoint/key"). Required for MinIO
+  // (including play.min.io) and most self-hosted or non-AWS endpoints; AWS
+  // S3 itself accepts either style. When pointed at a non-AWS endpoint and
+  // unsure, set this true.
+  bool path_style = 5;
+  // RECOMMENDED for any real credential. Name of the tenant secret holding
+  // the access key ID. Resolved server-side via ax.Secrets().Get() at
+  // invocation time — never carried in flow manifests, node inputs, logs, or
+  // this connector's own error messages. Required together with
+  // secret_key_secret_name (both or neither); takes precedence over
+  // access_key when both are set.
+  string access_key_secret_name = 6;
+  // RECOMMENDED for any real credential. Name of the tenant secret holding
+  // the secret access key. See access_key_secret_name — the same
+  // precedence and pairing rules apply.
+  string secret_key_secret_name = 7;
+  // Raw access key ID, as an alternative to access_key_secret_name. WARNING:
+  // a value placed here is visible in flow definitions, execution history,
+  // and logs — this is NOT a secret-safe channel. Use ONLY for
+  // publicly-documented or throwaway credentials (e.g. play.min.io's
+  // published demo keys); any real credential belongs in a tenant secret via
+  // access_key_secret_name instead. Ignored when access_key_secret_name is
+  // set.
+  string access_key = 8;
+  // Raw secret access key, as an alternative to secret_key_secret_name. Same
+  // warning and precedence rule as access_key. Ignored when
+  // secret_key_secret_name is set. Leaving all four credential fields empty
+  // is a structured error, not a crash — anonymous/unsigned access is not
+  // supported.
+  string secret_key = 9;
+}
+
+// Upload an object's full body inline in one call. The body travels through
+// the platform's normal request/response envelope, so it is bounded by that
+// envelope's size limit like any other node payload — for uploads too large
+// to fit inline, use PresignPut instead to hand the caller a URL that
+// uploads directly to the store, bypassing this connector and the flow
+// envelope entirely.
+message PutObjectRequest {
+  // Target connection and destination bucket.
+  Connection connection = 1;
+  // Object key (path) to write, e.g. "reports/2026/q1.csv".
+  string key = 2;
+  // The object's full body, inline.
+  bytes data = 3;
+  // MIME type to store with the object, e.g. "text/csv",
+  // "application/json". Empty defaults to "application/octet-stream".
+  string content_type = 4;
+  // Arbitrary user metadata to attach to the object (stored as
+  // provider-specific metadata headers, e.g. S3's "x-amz-meta-*"). Empty map
+  // means no user metadata. Keys are stored and later read back LOWER-CASED
+  // regardless of the case used here — this matches real S3's own documented
+  // behavior and avoids a provider-dependent casing surprise on read (see
+  // GetObjectResponse.metadata / HeadObjectResponse.metadata).
+  map<string, string> metadata = 5;
+}
+
+// The result of a successful PutObject call.
+message PutObjectResponse {
+  // The stored object's ETag, as reported by the provider (typically an MD5
+  // hex digest for a non-multipart upload, but treat it as an opaque
+  // version/integrity token rather than parsing it — some providers and
+  // upload paths use a different format).
+  string etag = 1;
+  // Size of the uploaded body, in bytes.
+  int64 size = 2;
+}
+
+// Download an object's full body inline in one call. For objects too large
+// to comfortably return inline, use StreamObjectBody (incremental frames) or
+// PresignGet (a direct download URL that bypasses this connector entirely).
+message GetObjectRequest {
+  // Target connection and source bucket.
+  Connection connection = 1;
+  // Object key to read.
+  string key = 2;
+}
+
+// The result of a successful GetObject call. A nonexistent key or bucket is
+// returned as a structured node error (see the package README's error
+// contract), never as a response with an empty body.
+message GetObjectResponse {
+  // The object's full body.
+  bytes data = 1;
+  // The object's stored MIME type, as reported by the provider.
+  string content_type = 2;
+  // The object's user metadata, keys lower-cased (see
+  // PutObjectRequest.metadata).
+  map<string, string> metadata = 3;
+  // The object's current ETag.
+  string etag = 4;
+  // Size of the returned body, in bytes.
+  int64 size = 5;
+  // Last-modified time, RFC 3339 (e.g. "2026-08-02T14:30:00Z").
+  string last_modified = 6;
+}
+
+// Check an object's existence and read its metadata WITHOUT downloading its
+// body — the cheap way to check "does this key exist, and how big is it"
+// before deciding to GetObject, StreamObjectBody, or skip.
+message HeadObjectRequest {
+  // Target connection and bucket.
+  Connection connection = 1;
+  // Object key to check.
+  string key = 2;
+}
+
+// The result of a HeadObject call. UNLIKE GetObject, a nonexistent key is
+// NOT a structured error here — checking existence is the whole point of
+// this node, so a missing object is reported as `exists=false` with every
+// other field at its zero value. A genuine failure (bad credentials,
+// unreachable endpoint, nonexistent BUCKET) is still a structured error.
+message HeadObjectResponse {
+  // True if the object exists; false if the key was not found in the
+  // bucket. When false, every field below is at its zero value and must be
+  // ignored as data.
+  bool exists = 1;
+  // Size in bytes. Meaningless when exists is false.
+  int64 size = 2;
+  // Current ETag. Meaningless when exists is false.
+  string etag = 3;
+  // Stored MIME type. Meaningless when exists is false.
+  string content_type = 4;
+  // User metadata, keys lower-cased (see PutObjectRequest.metadata).
+  // Meaningless (empty) when exists is false.
+  map<string, string> metadata = 5;
+  // Last-modified time, RFC 3339. Meaningless when exists is false.
+  string last_modified = 6;
+}
+
+// Delete one object. Deletion is IDEMPOTENT: deleting a key that does not
+// exist is reported as a normal success (deleted=true), exactly like S3's
+// own DELETE semantics — this matters because Axiom invokes nodes
+// at-least-once, so a retried delivery safely re-deletes an
+// already-gone key instead of surfacing a spurious not-found error.
+message DeleteObjectRequest {
+  // Target connection and bucket.
+  Connection connection = 1;
+  // Object key to delete.
+  string key = 2;
+}
+
+// The result of a DeleteObject call.
+message DeleteObjectResponse {
+  // Always true on a successful call — see the idempotency note above. A
+  // genuine failure (bad credentials, unreachable endpoint, nonexistent
+  // bucket) is a structured error instead, never a false here.
+  bool deleted = 1;
+}
+
+// List objects under a prefix, one page at a time. Mirrors the S3
+// ListObjectsV2 pagination model: pass the previous response's
+// next_continuation_token back in to fetch the next page.
+message ListObjectsRequest {
+  // Target connection and bucket.
+  Connection connection = 1;
+  // Only keys starting with this prefix are returned. Empty lists the whole
+  // bucket (subject to pagination).
+  string prefix = 2;
+  // Group keys sharing a prefix up to this delimiter into
+  // `common_prefixes` instead of listing them individually — the standard
+  // way to get a "directory-like" single-level listing. Must be "/" or
+  // empty: this connector's S3 client only supports "/" as a delimiter
+  // (a real client-library limitation, not a policy choice) — any other
+  // value is a structured error, never a silently-wrong result. Empty (the
+  // default) performs a flat, fully recursive listing with no grouping.
+  string delimiter = 3;
+  // Maximum number of keys to return in this page. 0 uses the provider's
+  // own default page size (S3-compatible providers commonly default to
+  // 1000). This bounds page SIZE for pagination purposes only — it is not a
+  // safety cap; Axiom's own payload limits already bound worst-case
+  // response size, and a caller wanting everything should simply follow
+  // next_continuation_token until is_truncated is false.
+  int32 max_keys = 4;
+  // Opaque continuation token from a previous ListObjectsResponse's
+  // next_continuation_token. Empty starts from the first page.
+  string continuation_token = 5;
+}
+
+// One object entry in a ListObjects page.
+message ObjectInfo {
+  // Full object key.
+  string key = 1;
+  // Size in bytes.
+  int64 size = 2;
+  // Current ETag.
+  string etag = 3;
+  // Last-modified time, RFC 3339.
+  string last_modified = 4;
+}
+
+// The result of one ListObjects page.
+message ListObjectsResponse {
+  // Individual object entries in this page, in the order the provider
+  // returned them. Does not include entries collapsed into
+  // common_prefixes.
+  repeated ObjectInfo objects = 1;
+  // "Directory-like" prefixes grouped by `delimiter`, populated only when
+  // the request set a non-empty delimiter. Each entry ends in the
+  // delimiter, e.g. "reports/2026/".
+  repeated string common_prefixes = 2;
+  // True if more pages remain — pass next_continuation_token back in to
+  // fetch them. False means this page reached the end of the listing.
+  bool is_truncated = 3;
+  // Opaque token for the next page. Empty when is_truncated is false.
+  string next_continuation_token = 4;
+}
+
+// Server-side copy of one object, within a bucket or between two buckets on
+// the SAME connection/provider — the bytes never transit through this
+// connector or the caller.
+message CopyObjectRequest {
+  // Target connection; `connection.bucket` is the COPY DESTINATION bucket.
+  Connection connection = 1;
+  // Source bucket. Empty defaults to `connection.bucket` (a same-bucket
+  // copy, e.g. a rename/re-key).
+  string source_bucket = 2;
+  // Source object key. Required.
+  string source_key = 3;
+  // Destination object key. Required.
+  string destination_key = 4;
+}
+
+// The result of a successful CopyObject call.
+message CopyObjectResponse {
+  // The destination object's ETag after the copy.
+  string etag = 1;
+  // Size of the copied object, in bytes.
+  int64 size = 2;
+}
+
+// Request an expiry-bounded, pre-authenticated URL for a single GET or PUT
+// against one object — the app-platform flagship: a browser or end-user
+// client can download or upload directly to the object store using this
+// URL, and the object's BYTES never pass through Axiom at all (only the
+// short-lived signed URL does). Used identically for PresignGet and
+// PresignPut; which HTTP method the URL is valid for is determined entirely
+// by which node you call.
+message PresignRequest {
+  // Target connection and bucket.
+  Connection connection = 1;
+  // Object key the URL grants access to.
+  string key = 2;
+  // How long the URL remains valid, in seconds. Must be between 1 and
+  // 604800 (7 days) — the AWS SigV4 signing scheme's own hard ceiling,
+  // enforced identically by every S3-compatible provider this connector
+  // targets. 0 defaults to 3600 (1 hour). A value outside [1, 604800] is a
+  // structured error, not a silently clamped one.
+  int32 expiry_seconds = 3;
+}
+
+// The result of a successful PresignGet or PresignPut call.
+message PresignResponse {
+  // The fully-qualified, pre-signed URL. For PresignGet, issue a plain GET
+  // against it; for PresignPut, PUT the object body against it (with no
+  // additional auth headers — the signature is embedded in the URL's query
+  // string). The platform never sees or handles the bytes transferred
+  // through this URL.
+  string url = 1;
+  // When this URL's signature expires, RFC 3339.
+  string expires_at = 2;
+}
+
+// Stream one object's body incrementally, one chunk per frame, using a real
+// streaming read from the provider — the object is never materialized whole
+// in memory, making this the right choice for large downloads that
+// GetObject's inline body would make impractical (see also PresignGet for
+// the zero-bytes-through-Axiom alternative). Frame field names mirror
+// christiangeorgelucas/http-tools' StreamBodyChunk so downstream pipeline
+// nodes (e.g. record-stream-tools' StreamCsvRecords) that already compose
+// with an HTTP byte stream compose with a bucket-backed one identically.
+message StreamObjectRequest {
+  // Target connection and bucket.
+  Connection connection = 1;
+  // Object key to stream.
+  string key = 2;
+}
+
+// One frame of a StreamObjectBody response. Frames are emitted in order;
+// each carries a contiguous, non-overlapping slice of the object's body.
+// Chunk size is internal (nominally ~1 MiB) and always well under the
+// platform's 24 MiB/frame ceiling; a stream that runs past the platform's
+// 5-minute node-stream ceiling ends with the TIMEOUT terminal error frame
+// below.
+message ObjectBodyChunk {
+  // Raw body bytes for this chunk. Empty on the terminal error frame and on
+  // the lone final frame of a zero-byte object.
+  bytes data = 1;
+  // Byte offset of data[0] within the full object body (0 on the first
+  // chunk).
+  int64 byte_offset = 2;
+  // The object's total size in bytes, set identically on every successful
+  // frame (known up front from a HEAD before streaming begins). 0 on the
+  // terminal error frame.
+  int64 total_size = 3;
+  // The object's stored MIME type, set identically on every successful
+  // frame. Empty on the terminal error frame.
+  string content_type = 4;
+  // Machine-readable failure token, set ONLY on the single terminal error
+  // frame emitted in place of the next chunk when the stream cannot
+  // complete or continue. Empty on every successful chunk. One of:
+  //   NOT_FOUND            the bucket or key does not exist
+  //   ACCESS_DENIED        the credentials are valid but not authorized, or invalid
+  //   UNREACHABLE_ENDPOINT DNS failure, connection refused, or TLS failure reaching the endpoint
+  //   TIMEOUT              the platform's 5-minute node-stream ceiling was reached
+  //   BODY_READ_FAILED     the download started but the connection dropped before completion
+  // A pipeline node cannot return a normal error mid-stream (there is no
+  // unary error envelope once frames have started), so a runtime failure is
+  // always surfaced as this in-band terminal frame — EXCEPT a pre-flight
+  // validation error (missing key, malformed connection, missing
+  // credential), which fails the node before any frame is emitted.
+  string error_code = 5;
+  // Human-readable reason matching error_code; empty when error_code is
+  // empty.
+  string error = 6;
+  // True on the last frame emitted — either the final successful chunk or
+  // the terminal error frame. This is the business-level completion
+  // signal; the platform's own transport-level terminal frame is empty and
+  // invisible to consumers reading frame payloads, so a caller must test
+  // THIS field, never infer end-of-stream from any other field being zero.
+  bool is_final = 7;
+}

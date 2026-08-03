@@ -1,0 +1,109 @@
+name: christiangeorgelucas/blob-connector
+version: 0.1.0
+language: go
+description: >-
+  Generic S3-compatible object storage against a caller-set endpoint — ONE
+  connector that speaks the S3 API for AWS S3, Cloudflare R2, GCS interop
+  mode, MinIO, Backblaze B2, and DigitalOcean Spaces alike. Bring-your-own
+  access key + secret key via a named tenant secret (recommended) or raw
+  fields (publicly-documented/throwaway credentials only) — the BLOB/STATE
+  pillar alongside christiangeorgelucas/sql-connector. Full CRUD +
+  pagination + server-side copy (unary), expiry-bounded presigned
+  GET/PUT URLs that bypass the flow envelope entirely (the app-platform
+  upload/download flagship), and a true incremental streaming read
+  (pipeline) for large objects.
+nodes:
+    - name: PutObject
+      input: PutObjectRequest
+      output: PutObjectResponse
+      description: >-
+        Upload an object's full body inline, with content type and optional
+        user metadata. The body travels through the platform's normal
+        request/response envelope, so it is bounded by that envelope's size
+        limit — for uploads too large to fit inline, use PresignPut instead.
+        At-least-once node invocation means a retried delivery can re-upload
+        the same object; this is last-writer-wins idempotent (the final
+        write simply overwrites any earlier one with the same key), so
+        retries are always safe.
+    - name: GetObject
+      input: GetObjectRequest
+      output: GetObjectResponse
+      description: >-
+        Download an object's full body inline, with its content type,
+        metadata, ETag, size, and last-modified time. A nonexistent bucket
+        or key is a structured error, never a response with an empty body.
+        For objects too large to comfortably return inline, use
+        StreamObjectBody (incremental frames) or PresignGet (a direct
+        download URL that bypasses this connector's payload path entirely).
+    - name: HeadObject
+      input: HeadObjectRequest
+      output: HeadObjectResponse
+      description: >-
+        Check whether an object exists and read its size, ETag, content
+        type, metadata, and last-modified time — WITHOUT downloading its
+        body. Unlike GetObject, a missing key is reported as
+        `exists: false` rather than a structured error, since checking
+        existence is the whole point of this node.
+    - name: DeleteObject
+      input: DeleteObjectRequest
+      output: DeleteObjectResponse
+      description: >-
+        Delete one object by key. Deletion is IDEMPOTENT: deleting a key
+        that does not exist is reported as an ordinary success
+        (`deleted: true`), matching S3's own DELETE semantics — so a
+        retried at-least-once delivery safely re-deletes an already-gone
+        key instead of surfacing a spurious not-found error.
+    - name: ListObjects
+      input: ListObjectsRequest
+      output: ListObjectsResponse
+      description: >-
+        List objects under a prefix, one page at a time, with an optional
+        delimiter for a "directory-like" grouped listing. Pass the previous
+        response's `next_continuation_token` back in to fetch the next
+        page; `is_truncated` says whether more pages remain. `max_keys`
+        bounds page size for pagination convenience only, not as a safety
+        cap.
+    - name: CopyObject
+      input: CopyObjectRequest
+      output: CopyObjectResponse
+      description: >-
+        Server-side copy of one object within a bucket or between two
+        buckets on the same connection/provider — the bytes never transit
+        through this connector or the caller. Idempotent: re-running the
+        same copy simply overwrites the destination with the same result.
+    - name: PresignGet
+      input: PresignRequest
+      output: PresignResponse
+      description: >-
+        Issue an expiry-bounded, pre-signed URL for downloading one object
+        directly from the object store — the object's bytes never pass
+        through Axiom. The app-platform download path: hand this URL to an
+        end-user client instead of proxying the download through a flow.
+        Pure and side-effect-free: generating a URL never touches the
+        object itself, so it is safe to call any number of times.
+    - name: PresignPut
+      input: PresignRequest
+      output: PresignResponse
+      description: >-
+        Issue an expiry-bounded, pre-signed URL for uploading one object
+        directly to the object store via a plain HTTP PUT — the uploaded
+        bytes never pass through Axiom. The app-platform upload path: hand
+        this URL to an end-user client for direct browser/app uploads
+        instead of proxying the body through a flow's request envelope.
+        Pure and side-effect-free: generating a URL never touches the
+        object itself, so it is safe to call any number of times; whether
+        an upload actually happens is entirely up to whoever uses the URL.
+    - name: StreamObjectBody
+      input: StreamObjectRequest
+      output: ObjectBodyChunk
+      type: pipeline
+      description: >-
+        Stream one object's body incrementally, one chunk per frame, using
+        a true streaming read from the provider — the object is never
+        materialized whole in memory. Frame field names mirror
+        christiangeorgelucas/http-tools' StreamBodyChunk (data, byte_offset,
+        error_code, error, is_final) so downstream pipeline nodes that
+        already compose with an HTTP byte stream (e.g. record-stream-tools'
+        StreamCsvRecords on a CSV object) compose with a bucket-backed
+        stream identically. Idempotent: a redelivered execution restarts
+        the read from byte 0.
