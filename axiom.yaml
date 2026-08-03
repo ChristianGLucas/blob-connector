@@ -2,16 +2,20 @@ name: christiangeorgelucas/blob-connector
 version: 0.1.0
 language: go
 description: >-
-  Generic S3-compatible object storage against a caller-set endpoint — ONE
-  connector that speaks the S3 API for AWS S3, Cloudflare R2, GCS interop
-  mode, MinIO, Backblaze B2, and DigitalOcean Spaces alike. Bring-your-own
-  access key + secret key via a named tenant secret (recommended) or raw
-  fields (publicly-documented/throwaway credentials only) — the BLOB/STATE
-  pillar alongside christiangeorgelucas/sql-connector. Full CRUD +
-  pagination + server-side copy (unary), expiry-bounded presigned
-  GET/PUT URLs that bypass the flow envelope entirely (the app-platform
-  upload/download flagship), and a true incremental streaming read
-  (pipeline) for large objects.
+  Generic S3-compatible object storage template — the BLOB/STATE pillar
+  alongside christiangeorgelucas/sql-connector. Speaks the S3 API for AWS S3,
+  Cloudflare R2, GCS interop mode, MinIO, Backblaze B2, and DigitalOcean
+  Spaces alike. This package is NOT directly invocable: the 8 CRUD/list/copy/
+  presign nodes publish a generalized (kind: generic) template each, and a
+  consumer binds one to a real bucket via `axiom instance create` — pinning
+  the endpoint, region, addressing style, and credentials (a literal
+  raw key pair for a public/demo target, or an instance-declared tenant
+  secret for a private one) so an Instance's own callers never see
+  connection details at all, only the object-shaped fields (key, data,
+  prefix, etc). StreamObjectBody (pipeline) is the one exception: pipeline
+  Instances are not yet supported by the platform, so it stays directly
+  invocable with the full connection in its input, exactly like a
+  concrete node.
 nodes:
     - name: PutObject
       input: PutObjectRequest
@@ -19,82 +23,124 @@ nodes:
       kind: generic
       generic_ports: [input]
       description: >-
-        Upload an object's full body inline, with content type and optional
-        user metadata. The body travels through the platform's normal
-        request/response envelope, so it is bounded by that envelope's size
-        limit — for uploads too large to fit inline, use PresignPut instead.
-        At-least-once node invocation means a retried delivery can re-upload
-        the same object; this is last-writer-wins idempotent (the final
-        write simply overwrites any earlier one with the same key), so
-        retries are always safe.
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node PutObject ...`);
+        not directly invocable. Uploads an object's full body inline, with
+        content type and optional user metadata. The body travels through
+        the platform's normal request/response envelope, so it is bounded by
+        that envelope's size limit — for uploads too large to fit inline,
+        use PresignPut instead. At-least-once node invocation means a
+        retried delivery can re-upload the same object; this is
+        last-writer-wins idempotent (the final write simply overwrites any
+        earlier one with the same key), so retries are always safe.
     - name: GetObject
       input: GetObjectRequest
       output: GetObjectResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
-        Download an object's full body inline, with its content type,
-        metadata, ETag, size, and last-modified time. A nonexistent bucket
-        or key is a structured error, never a response with an empty body.
-        For objects too large to comfortably return inline, use
-        StreamObjectBody (incremental frames) or PresignGet (a direct
-        download URL that bypasses this connector's payload path entirely).
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node GetObject ...`);
+        not directly invocable. Downloads an object's full body inline, with
+        its content type, metadata, ETag, size, and last-modified time. A
+        nonexistent bucket or key is a structured error, never a response
+        with an empty body. For objects too large to comfortably return
+        inline, use StreamObjectBody (incremental frames) or PresignGet (a
+        direct download URL that bypasses this connector's payload path
+        entirely).
     - name: HeadObject
       input: HeadObjectRequest
       output: HeadObjectResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
-        Check whether an object exists and read its size, ETag, content
-        type, metadata, and last-modified time — WITHOUT downloading its
-        body. Unlike GetObject, a missing key is reported as
-        `exists: false` rather than a structured error, since checking
-        existence is the whole point of this node.
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node HeadObject ...`);
+        not directly invocable. Checks whether an object exists and reads
+        its size, ETag, content type, metadata, and last-modified time —
+        WITHOUT downloading its body. Unlike GetObject, a missing key is
+        reported as `exists: false` rather than a structured error, since
+        checking existence is the whole point of this node.
     - name: DeleteObject
       input: DeleteObjectRequest
       output: DeleteObjectResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
-        Delete one object by key. Deletion is IDEMPOTENT: deleting a key
-        that does not exist is reported as an ordinary success
-        (`deleted: true`), matching S3's own DELETE semantics — so a
-        retried at-least-once delivery safely re-deletes an already-gone
-        key instead of surfacing a spurious not-found error.
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node DeleteObject
+        ...`); not directly invocable. Deletes one object by key. Deletion
+        is IDEMPOTENT: deleting a key that does not exist is reported as an
+        ordinary success (`deleted: true`), matching S3's own DELETE
+        semantics — so a retried at-least-once delivery safely re-deletes an
+        already-gone key instead of surfacing a spurious not-found error.
     - name: ListObjects
       input: ListObjectsRequest
       output: ListObjectsResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
-        List objects under a prefix, one page at a time, with an optional
-        delimiter for a "directory-like" grouped listing. Pass the previous
-        response's `next_continuation_token` back in to fetch the next
-        page; `is_truncated` says whether more pages remain. `max_keys`
-        bounds page size for pagination convenience only, not as a safety
-        cap.
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node ListObjects
+        ...`); not directly invocable. Lists objects under a prefix, one
+        page at a time, with an optional delimiter for a "directory-like"
+        grouped listing. Pass the previous response's
+        `next_continuation_token` back in to fetch the next page;
+        `is_truncated` says whether more pages remain. `max_keys` bounds
+        page size for pagination convenience only, not as a safety cap.
     - name: CopyObject
       input: CopyObjectRequest
       output: CopyObjectResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
-        Server-side copy of one object within a bucket or between two
-        buckets on the same connection/provider — the bytes never transit
-        through this connector or the caller. Idempotent: re-running the
-        same copy simply overwrites the destination with the same result.
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node CopyObject
+        ...`); not directly invocable. Server-side copy of one object within
+        a bucket or between two buckets on the same connection/provider —
+        the bytes never transit through this connector or the caller.
+        Idempotent: re-running the same copy simply overwrites the
+        destination with the same result.
     - name: PresignGet
       input: PresignRequest
       output: PresignResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
-        Issue an expiry-bounded, pre-signed URL for downloading one object
-        directly from the object store — the object's bytes never pass
-        through Axiom. The app-platform download path: hand this URL to an
-        end-user client instead of proxying the download through a flow.
-        Pure and side-effect-free: generating a URL never touches the
-        object itself, so it is safe to call any number of times.
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node PresignGet
+        ...`); not directly invocable. Issues an expiry-bounded, pre-signed
+        URL for downloading one object directly from the object store — the
+        object's bytes never pass through Axiom. The app-platform download
+        path: hand this URL to an end-user client instead of proxying the
+        download through a flow. Pure and side-effect-free: generating a URL
+        never touches the object itself, so it is safe to call any number of
+        times.
     - name: PresignPut
       input: PresignRequest
       output: PresignResponse
+      kind: generic
+      generic_ports: [input]
       description: >-
-        Issue an expiry-bounded, pre-signed URL for uploading one object
-        directly to the object store via a plain HTTP PUT — the uploaded
-        bytes never pass through Axiom. The app-platform upload path: hand
-        this URL to an end-user client for direct browser/app uploads
-        instead of proxying the body through a flow's request envelope.
-        Pure and side-effect-free: generating a URL never touches the
-        object itself, so it is safe to call any number of times; whether
-        an upload actually happens is entirely up to whoever uses the URL.
+        GENERIC TEMPLATE — bind to a real bucket via an Instance before use
+        (`axiom instance create --generic-package
+        christiangeorgelucas/blob-connector --generic-node PresignPut
+        ...`); not directly invocable. Issues an expiry-bounded, pre-signed
+        URL for uploading one object directly to the object store via a
+        plain HTTP PUT — the uploaded bytes never pass through Axiom. The
+        app-platform upload path: hand this URL to an end-user client for
+        direct browser/app uploads instead of proxying the body through a
+        flow's request envelope. Pure and side-effect-free: generating a URL
+        never touches the object itself, so it is safe to call any number of
+        times; whether an upload actually happens is entirely up to whoever
+        uses the URL.
     - name: StreamObjectBody
       input: StreamObjectRequest
       output: ObjectBodyChunk
